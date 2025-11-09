@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>💣 Bomb Diffuse — Auto Next & Timer</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    .timer-ring { width: 120px; height: 120px; }
+    .server-glow { box-shadow: 0 8px 24px rgba(236,72,153,0.12), 0 0 0 4px rgba(236,72,153,0.06); }
+  </style>
+</head>
+
+<body class="bg-gradient-to-b from-pink-50 to-purple-100 min-h-screen flex items-center justify-center p-6">
+  <div class="w-full max-w-3xl bg-white/90 backdrop-blur rounded-2xl shadow-2xl p-6"
+       x-data="gameApp()" x-init="$nextTick(()=>{ document.getElementById('s-defuse')?.load(); document.getElementById('s-explosion')?.load(); })">
+
+    <!-- header -->
+    <div class="flex items-start justify-between mb-3">
+      <div>
+        <h1 class="text-2xl font-bold">💣 Bomb Diffuse</h1>
+        <div class="text-sm text-gray-500 mt-1">Server assigned: <span class="font-semibold text-pink-600" x-text="serverPlayer || '—'"></span></div>
+      </div>
+
+      <div class="text-right">
+        <div class="mb-1 text-sm text-gray-500">Round <strong x-text="round+1"></strong> — Timer: <span x-text="timer"></span>s</div>
+        <div>
+          <button x-show="!soundsUnlocked" @click="unlockSounds()" class="px-3 py-1 rounded-md border text-sm">🔊 Enable Sounds</button>
+          <button x-show="soundsUnlocked" @click="mute = !mute" class="px-3 py-1 rounded-md border text-sm"><span x-text="mute ? '🔇 Muted' : '🔊 Sounds'"></span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- setup -->
+    <template x-if="!started">
+      <div class="space-y-4">
+        <label class="block text-sm font-medium">Enter player names (comma separated)</label>
+        <input x-model="playersInput" class="w-full p-3 rounded-lg border" placeholder="Alice, Bob" />
+        <div class="flex gap-2">
+          <button @click="createGame()" class="flex-1 bg-pink-500 text-white py-2 rounded-lg shadow">Start Game</button>
+          <button @click="example()" class="py-2 px-4 rounded-lg border">Example</button>
+        </div>
+        <div class="text-sm text-gray-600" x-text="message"></div>
+      </div>
+    </template>
+
+    <!-- game UI -->
+    <template x-if="started">
+      <div class="space-y-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm text-gray-500">Round <strong x-text="round+1"></strong></div>
+            <div class="text-lg font-semibold">Now: <span class="text-pink-600" x-text="currentPlayer"></span></div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <template x-for="p in players" :key="p">
+              <div class="text-center px-3 py-1 rounded" :class="serverPlayer === p ? 'server-glow bg-pink-50' : ''">
+                <div class="font-medium" x-text="p"></div>
+                <div class="text-xs text-red-500" x-text="lives[p] + ' ♥'"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- word + timer -->
+        <div class="flex items-center gap-6">
+          <svg class="timer-ring" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="52" stroke="#eee" stroke-width="12" fill="none"></circle>
+            <circle cx="60" cy="60" r="52" stroke="currentColor" stroke-width="12" stroke-linecap="round"
+                    fill="none" :style="'stroke-dasharray:326; stroke-dashoffset:'+dashOffset"
+                    class="text-pink-400 transform -rotate-90 origin-center"></circle>
+            <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="14" fill="#333" x-text="timeLeftFormatted"></text>
+          </svg>
+
+          <div class="flex-1">
+            <div class="bg-white rounded-xl p-4 shadow">
+              <div class="text-sm text-gray-500">Word (type quickly)</div>
+
+              <!-- displayWord is shown briefly then masked (so players can't copy) -->
+              <div class="mt-2 text-3xl font-semibold text-pink-600" x-text="displayWordVisible ? displayWord : maskedWord"></div>
+
+              <div class="mt-4 flex gap-2">
+                <input x-ref="typedInput" x-model="typed" @keydown.enter="submitTyped()" class="flex-1 p-3 rounded-lg border" placeholder="Type the word..." />
+                <button @click="submitTyped()" class="px-4 py-3 rounded-lg bg-purple-500 text-white">Send</button>
+              </div>
+
+              <div class="mt-3 text-sm text-gray-600" x-text="message"></div>
+
+              <div class="mt-3 h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div class="h-2 bg-pink-400" :style="'width: '+(100*(1 - (dashOffset/326))).toFixed(1)+'%'"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-between">
+          <button @click="nextAlivePlayerAndShowWord()" class="px-4 py-2 rounded-lg border">Next Turn</button>
+          <button @click="reset()" class="px-4 py-2 rounded-lg border">Reset</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- game over -->
+    <div x-show="gameOver" class="fixed inset-0 bg-black/40 flex items-center justify-center" x-cloak>
+      <div class="bg-white p-6 rounded-2xl shadow-xl w-11/12 max-w-md text-center">
+        <div class="text-3xl">🏁 Game Over</div>
+        <div class="mt-3 text-lg" x-text="'Winner(s): ' + winners.join(', ')"></div>
+        <div class="mt-4">
+          <button @click="reset()" class="px-4 py-2 bg-pink-500 text-white rounded-lg">Play Again</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- audio -->
+  <audio id="s-defuse" src="/sounds/defuse.mp3" preload="auto"></audio>
+  <audio id="s-explosion" src="/sounds/explosion.mp3" preload="auto"></audio>
+
+<script>
+function gameApp(){
+  return {
+    playersInput: '',
+    players: [],
+    gameId: null,
+    lives: {},
+    started: false,
+    round: 0,
+    timer: 5,
+    timers: [5,4,3,2,1],
+    timeLeft: 0,
+    dashOffset: 0,
+    currentPlayer: '',
+    serverPlayer: '',
+    displayWord: '',
+    displayWord_backup: '',
+    displayWordVisible: false,
+    maskedWord: '••••••',
+    typed: '',
+    message: '',
+    mute: false,
+    soundsUnlocked: false,
+    gameOver: false,
+    winners: [],
+    intervalId: null,
+    turnIndex: 0,
+    previousWords: [],
+    lastRoundSeen: 0,
+
+    example(){ this.playersInput = "Alice, Bob"; },
+
+    get timeLeftFormatted(){
+      // show 2 decimal precision
+      return this.timeLeft > 0 ? this.timeLeft.toFixed(2) + 's' : '0.00s';
+    },
+
+    async unlockSounds(){
+      try {
+        await document.getElementById('s-defuse').play().catch(()=>{});
+        await document.getElementById('s-explosion').play().catch(()=>{});
+        document.getElementById('s-defuse').pause(); document.getElementById('s-defuse').currentTime = 0;
+        document.getElementById('s-explosion').pause(); document.getElementById('s-explosion').currentTime = 0;
+      } catch(e){ console.warn('unlock', e); }
+      this.soundsUnlocked = true;
+    },
+
+    async createGame(){
+      const players = this.playersInput.split(",").map(x=>x.trim()).filter(Boolean);
+      if(!players.length) return alert("Enter at least one player!");
+      const res = await fetch('/create_game', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({players})
+      });
+      const data = await res.json();
+      if(data.error){ alert(data.error); return; }
+      this.gameId = data.game_id;
+      this.players = players;
+      this.lives = {}; players.forEach(p=>this.lives[p]=3);
+      if(Array.isArray(data.timers)) this.timers=data.timers;
+      this.round=0; this.timer=this.timers[0]; this.started=true;
+      this.turnIndex = 0; this.currentPlayer = this.players[this.turnIndex] || '';
+      this.serverPlayer = '';
+      this.previousWords = [];
+      this.lastRoundSeen = this.round;
+      // fetch first word
+      this.nextAlivePlayerAndShowWord();
+    },
+
+    positionArrowToPlayer(playerName){
+      // not required; placeholder for additional animation
+    },
+
+    async nextAlivePlayerAndShowWord(){
+      clearInterval(this.intervalId);
+      const n = this.players.length;
+      if (n === 0) return;
+      let attempts = 0;
+      while(attempts < n){
+        const candidate = this.players[this.turnIndex % n];
+        if(this.lives[candidate] > 0){ this.currentPlayer = candidate; break; }
+        this.turnIndex = (this.turnIndex + 1) % n;
+        attempts++;
+      }
+
+      const alive = this.players.filter(p=>this.lives[p] > 0);
+      if (alive.length <= 1){ this.endGame(); return; }
+
+      try {
+        // request server word for this currentPlayer
+        const resp = await fetch(`/game/${this.gameId}/word?player=${encodeURIComponent(this.currentPlayer)}`);
+        const jw = await resp.json();
+        if(jw.error){ this.message = jw.error; return; }
+
+        this.serverPlayer = jw.player || this.currentPlayer;
+        this.displayWord_backup = jw.word || '';
+        this.displayWord = this.displayWord_backup;
+        // show plaintext briefly then mask
+        this.displayWordVisible = true;
+        setTimeout(()=>{ this.displayWordVisible = false; }, 900);
+
+        if(this.displayWord_backup) this.previousWords.push(this.displayWord_backup);
+        this.typed = '';
+        this.$nextTick(()=>{ try{ this.$refs.typedInput.focus(); }catch(e){} });
+
+        this.message = "Ready... Type it fast!";
+        this.timer = jw.timer || this.timers[this.round] || 5;
+        this.timeLeft = this.timer;
+        this.updateDash();
+        // start ticking
+        this.intervalId = setInterval(()=>{
+          this.timeLeft -= 0.05;
+          if(this.timeLeft <= 0){ clearInterval(this.intervalId); this.submitTyped(true); }
+          this.updateDash();
+        }, 50);
+
+      } catch(e){
+        console.warn('fetch word failed', e);
+        this.message = 'Network error getting word';
+      }
+    },
+
+    updateDash(){
+      const full = 326;
+      const pct = (this.timer > 0 ? Math.max(0, this.timeLeft / this.timer) : 0);
+      this.dashOffset = Math.round(full * (1 - pct));
+    },
+
+    async submitTyped(timeout=false){
+      clearInterval(this.intervalId);
+      const typed = this.typed.trim();
+      const word = this.displayWord_backup;
+      const elapsed = this.timer - this.timeLeft;
+      const localSuccess = !timeout && typed === word && elapsed <= this.timer;
+
+      if(localSuccess){
+        if(!this.mute && this.soundsUnlocked) document.getElementById('s-defuse').play().catch(()=>{});
+        this.message = "✅ Defused in time!";
+      } else {
+        if(!this.mute && this.soundsUnlocked) document.getElementById('s-explosion').play().catch(()=>{});
+        this.message = "💥 Too slow or wrong!";
+        this.lives[this.currentPlayer] = Math.max(0, (this.lives[this.currentPlayer] || 0) - 1);
+      }
+
+      // send submit to server to sync authoritative state
+      try {
+        const res = await fetch(`/game/${this.gameId}/submit`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({player:this.currentPlayer, typed, word, elapsed, round:this.round})
+        });
+        const jr = await res.json();
+        if(jr.error){ this.message = jr.error; }
+        else {
+          if(jr.lives) this.lives = jr.lives;
+          if(typeof jr.current_round === 'number'){
+            if(jr.current_round > this.lastRoundSeen){
+              // round advanced — clear previousWords and notify
+              this.previousWords = [];
+            }
+            this.round = jr.current_round;
+            this.lastRoundSeen = this.round;
+          }
+          if(jr.player){ this.serverPlayer = jr.player; }
+        }
+      } catch(e){
+        console.warn('submit failed', e);
+      }
+
+      // clear typed input and show mask quickly so user can start typing for next word
+      this.typed = '';
+      this.displayWordVisible = false;
+      this.displayWord = this.maskedWord;
+      this.$nextTick(()=>{ try{ this.$refs.typedInput.focus(); }catch(e){} });
+
+      // increment local turn index and automatically fetch next word after a small delay
+      this.turnIndex = (this.turnIndex + 1) % (this.players.length || 1);
+      setTimeout(()=> {
+        const alive = this.players.filter(p => this.lives[p] > 0);
+        if (alive.length <= 1) { this.endGame(); return; }
+        this.serverPlayer = '';
+        this.nextAlivePlayerAndShowWord();
+      }, 600); // short delay so sounds/messages finish
+    },
+
+    endGame(){
+      clearInterval(this.intervalId);
+      this.gameOver = true;
+      const maxLives = Math.max(...Object.values(this.lives));
+      this.winners = Object.keys(this.lives).filter(p => this.lives[p] === maxLives);
+    },
+
+    reset(){ window.location.reload(); }
+  }
+}
+</script>
+
+</body>
+</html>
